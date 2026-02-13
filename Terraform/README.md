@@ -55,8 +55,11 @@ After apply, Terraform outputs:
 
 output
 aoss_readonly_role_arn = "arn:aws:iam::782428716412:role/dev-app-aoss-readonly"
+
 aoss_readwrite_role_arn = "arn:aws:iam::782428716412:role/dev-app-aoss-readwrite"
+
 dynamodb_table_name = "enrichment_cache"
+
 opensearch_dashboard_url = "https://szf4fp4fonovhgvcdv5b.us-east-1.aoss.amazonaws.com/_dashboards"        
 opensearch_endpoint = "https://szf4fp4fonovhgvcdv5b.us-east-1.aoss.amazonaws.com"
 

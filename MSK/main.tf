@@ -1,4 +1,6 @@
-# main.tf - DEV MSK Cluster with IAM Auth and Public Access (Cost Optimized)
+# main.tf - DEV MSK Cluster with IAM Auth
+# Uses public subnets (same as manual setup)
+# Public access enabled after cluster creation via aws_msk_cluster update
 
 terraform {
   required_providers {
@@ -15,7 +17,6 @@ provider "aws" {
   secret_key = var.secret_key
 }
 
-
 data "aws_caller_identity" "current" {}
 
 data "aws_availability_zones" "available" {
@@ -23,7 +24,7 @@ data "aws_availability_zones" "available" {
 }
 
 # ====================================
-# VPC and Networking (Simplified - No NAT Gateway)
+# VPC
 # ====================================
 
 resource "aws_vpc" "msk_vpc" {
@@ -38,6 +39,10 @@ resource "aws_vpc" "msk_vpc" {
   }
 }
 
+# ====================================
+# Internet Gateway
+# ====================================
+
 resource "aws_internet_gateway" "msk_igw" {
   vpc_id = aws_vpc.msk_vpc.id
 
@@ -47,49 +52,53 @@ resource "aws_internet_gateway" "msk_igw" {
   }
 }
 
-# Private Subnets (MSK brokers MUST be in private subnets for public access)
-resource "aws_subnet" "private" {
-  count             = 2
-  vpc_id            = aws_vpc.msk_vpc.id
-  cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 10)
-  availability_zone = data.aws_availability_zones.available.names[count.index]
+# ====================================
+# Public Subnets (same as your manual setup)
+# ====================================
+
+resource "aws_subnet" "public" {
+  count                   = 2
+  vpc_id                  = aws_vpc.msk_vpc.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
 
   tags = {
-    Name        = "${var.cluster_name}-private-subnet-${count.index + 1}"
+    Name        = "${var.cluster_name}-public-subnet-${count.index + 1}"
     Environment = "dev"
-    Type        = "private"
+    Type        = "public"
   }
 }
 
-# Route Table for Private Subnets (no internet route - isolated)
-resource "aws_route_table" "private" {
+resource "aws_route_table" "public" {
   vpc_id = aws_vpc.msk_vpc.id
 
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.msk_igw.id
+  }
+
   tags = {
-    Name        = "${var.cluster_name}-private-rt"
+    Name        = "${var.cluster_name}-public-rt"
     Environment = "dev"
   }
 }
 
-resource "aws_route_table_association" "private" {
+resource "aws_route_table_association" "public" {
   count          = 2
-  subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  subnet_id      = aws_subnet.public[count.index].id
+  route_table_id = aws_route_table.public.id
 }
 
 # ====================================
 # VPC Gateway Endpoints (FREE!)
-# MSK internally uses DynamoDB and S3
-# Without these, brokers can't function properly
 # ====================================
 
-# DynamoDB VPC Endpoint (FREE - Gateway type)
-# MSK uses DynamoDB internally for cluster metadata and state management
 resource "aws_vpc_endpoint" "dynamodb" {
   vpc_id            = aws_vpc.msk_vpc.id
   service_name      = "com.amazonaws.${var.aws_region}.dynamodb"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id]
+  route_table_ids   = [aws_route_table.public.id]
 
   tags = {
     Name        = "${var.cluster_name}-dynamodb-endpoint"
@@ -98,13 +107,11 @@ resource "aws_vpc_endpoint" "dynamodb" {
   }
 }
 
-# S3 VPC Endpoint (FREE - Gateway type)
-# MSK uses S3 internally for storing logs and cluster data
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.msk_vpc.id
   service_name      = "com.amazonaws.${var.aws_region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id]
+  route_table_ids   = [aws_route_table.public.id]
 
   tags = {
     Name        = "${var.cluster_name}-s3-endpoint"
@@ -122,16 +129,14 @@ resource "aws_security_group" "msk" {
   description = "Security group for MSK cluster"
   vpc_id      = aws_vpc.msk_vpc.id
 
-  # Kafka IAM Auth (port 9098)
   ingress {
-    description = "Kafka IAM Auth from on-prem"
+    description = "Kafka IAM Auth"
     from_port   = 9098
     to_port     = 9098
     protocol    = "tcp"
     cidr_blocks = var.allowed_cidr_blocks
   }
 
-  # ZooKeeper
   ingress {
     description = "ZooKeeper"
     from_port   = 2181
@@ -140,9 +145,7 @@ resource "aws_security_group" "msk" {
     cidr_blocks = var.allowed_cidr_blocks
   }
 
-  # Allow all outbound
   egress {
-    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -156,12 +159,12 @@ resource "aws_security_group" "msk" {
 }
 
 # ====================================
-# KMS Key for Encryption
+# KMS Key
 # ====================================
 
 resource "aws_kms_key" "msk" {
   description             = "KMS key for MSK cluster encryption"
-  deletion_window_in_days = 7 # Shorter for dev
+  deletion_window_in_days = 7
 
   tags = {
     Name        = "${var.cluster_name}-kms-key"
@@ -180,7 +183,7 @@ resource "aws_kms_alias" "msk" {
 
 resource "aws_cloudwatch_log_group" "msk" {
   name              = "/aws/msk/${var.cluster_name}"
-  retention_in_days = 3 # Short retention for dev
+  retention_in_days = 3
 
   tags = {
     Name        = "${var.cluster_name}-logs"
@@ -204,12 +207,13 @@ default.replication.factor=2
 min.insync.replicas=1
 num.partitions=3
 PROPERTIES
-
-  description = "MSK configuration for ${var.cluster_name}"
 }
 
 # ====================================
-# MSK Cluster (t3.small for cost optimization)
+# MSK Cluster
+# Step 1: Create WITHOUT public access first
+# Step 2: Enable public access after creation
+# This is how AWS Console does it internally!
 # ====================================
 
 resource "aws_msk_cluster" "main" {
@@ -218,8 +222,8 @@ resource "aws_msk_cluster" "main" {
   number_of_broker_nodes = 2
 
   broker_node_group_info {
-    instance_type  = "kafka.t3.small" # Cost optimized for DEV
-    client_subnets = aws_subnet.private[*].id # Must use PRIVATE subnets for public access
+    instance_type   = "kafka.t3.small"
+    client_subnets  = aws_subnet.public[*].id
     security_groups = [aws_security_group.msk.id]
 
     storage_info {
@@ -230,19 +234,17 @@ resource "aws_msk_cluster" "main" {
 
     connectivity_info {
       public_access {
-        type = "SERVICE_PROVIDED_EIPS"
+        type = "DISABLED" # Start with DISABLED
       }
     }
   }
 
-  # IAM Authentication
   client_authentication {
     sasl {
       iam = true
     }
   }
 
-  # Encryption
   encryption_info {
     encryption_at_rest_kms_key_arn = aws_kms_key.msk.arn
 
@@ -252,13 +254,11 @@ resource "aws_msk_cluster" "main" {
     }
   }
 
-  # Configuration
   configuration_info {
     arn      = aws_msk_configuration.main.arn
     revision = aws_msk_configuration.main.latest_revision
   }
 
-  # Logging
   logging_info {
     broker_logs {
       cloudwatch_logs {
@@ -276,7 +276,35 @@ resource "aws_msk_cluster" "main" {
 }
 
 # ====================================
-# IAM User for On-Prem Access
+# Enable Public Access AFTER cluster creation
+# This uses AWS CLI via local-exec provisioner
+# Same as clicking "Edit" -> "Enable public access" in console
+# ====================================
+
+resource "null_resource" "enable_public_access" {
+  depends_on = [aws_msk_cluster.main]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for MSK cluster to be ACTIVE..."
+      aws kafka wait cluster-active --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region}
+
+      echo "Enabling public access..."
+      aws kafka update-connectivity \
+        --cluster-arn ${aws_msk_cluster.main.arn} \
+        --region ${var.aws_region} \
+        --connectivity-info '{"PublicAccess":{"Type":"SERVICE_PROVIDED_EIPS"}}' \
+        --current-version $(aws kafka describe-cluster --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region} --query 'ClusterInfo.CurrentVersion' --output text)
+
+      echo "Waiting for update to complete..."
+      aws kafka wait cluster-active --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region}
+      echo "Public access enabled successfully!"
+    EOT
+  }
+}
+
+# ====================================
+# IAM User
 # ====================================
 
 resource "aws_iam_user" "debezium" {
@@ -294,7 +322,7 @@ resource "aws_iam_access_key" "debezium" {
 }
 
 # ====================================
-# IAM Role for MSK Access
+# IAM Role
 # ====================================
 
 resource "aws_iam_role" "msk_access" {
@@ -322,7 +350,6 @@ resource "aws_iam_role" "msk_access" {
   }
 }
 
-# MSK Access Policy
 resource "aws_iam_role_policy" "msk_access" {
   name = "msk-access-policy"
   role = aws_iam_role.msk_access.id
@@ -370,7 +397,6 @@ resource "aws_iam_role_policy" "msk_access" {
   })
 }
 
-# Allow IAM User to AssumeRole
 resource "aws_iam_user_policy" "assume_role" {
   name = "assume-msk-role"
   user = aws_iam_user.debezium.name
@@ -391,7 +417,7 @@ resource "aws_iam_user_policy" "assume_role" {
 }
 
 # ====================================
-# Secrets Manager (Store Credentials)
+# Secrets Manager
 # ====================================
 
 resource "aws_secretsmanager_secret" "debezium_creds" {
@@ -404,7 +430,8 @@ resource "aws_secretsmanager_secret" "debezium_creds" {
 }
 
 resource "aws_secretsmanager_secret_version" "debezium_creds" {
-  secret_id = aws_secretsmanager_secret.debezium_creds.id
+  secret_id  = aws_secretsmanager_secret.debezium_creds.id
+  depends_on = [null_resource.enable_public_access]
 
   secret_string = jsonencode({
     AWS_ACCESS_KEY_ID     = aws_iam_access_key.debezium.id
@@ -412,7 +439,7 @@ resource "aws_secretsmanager_secret_version" "debezium_creds" {
     AWS_REGION            = var.aws_region
     ROLE_ARN              = aws_iam_role.msk_access.arn
     EXTERNAL_ID           = var.external_id
-    BOOTSTRAP_SERVERS     = aws_msk_cluster.main.bootstrap_brokers_public_sasl_iam
     CLUSTER_ARN           = aws_msk_cluster.main.arn
+    NOTE                  = "Get bootstrap servers: aws kafka get-bootstrap-brokers --cluster-arn CLUSTER_ARN"
   })
 }

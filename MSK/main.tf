@@ -11,7 +11,10 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+  access_key = var.access_key
+  secret_key = var.secret_key
 }
+
 
 data "aws_caller_identity" "current" {}
 
@@ -44,40 +47,70 @@ resource "aws_internet_gateway" "msk_igw" {
   }
 }
 
-# Public Subnets (MSK brokers will be here - simplified for DEV)
-resource "aws_subnet" "public" {
-  count                   = 2
-  vpc_id                  = aws_vpc.msk_vpc.id
-  cidr_block              = cidrsubnet(var.vpc_cidr, 8, count.index)
-  availability_zone       = data.aws_availability_zones.available.names[count.index]
-  map_public_ip_on_launch = true
+# Private Subnets (MSK brokers MUST be in private subnets for public access)
+resource "aws_subnet" "private" {
+  count             = 2
+  vpc_id            = aws_vpc.msk_vpc.id
+  cidr_block        = cidrsubnet(var.vpc_cidr, 8, count.index + 10)
+  availability_zone = data.aws_availability_zones.available.names[count.index]
 
   tags = {
-    Name        = "${var.cluster_name}-public-subnet-${count.index + 1}"
+    Name        = "${var.cluster_name}-private-subnet-${count.index + 1}"
     Environment = "dev"
-    Type        = "public"
+    Type        = "private"
   }
 }
 
-# Route Table for Public Subnets
-resource "aws_route_table" "public" {
+# Route Table for Private Subnets (no internet route - isolated)
+resource "aws_route_table" "private" {
   vpc_id = aws_vpc.msk_vpc.id
 
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.msk_igw.id
-  }
-
   tags = {
-    Name        = "${var.cluster_name}-public-rt"
+    Name        = "${var.cluster_name}-private-rt"
     Environment = "dev"
   }
 }
 
-resource "aws_route_table_association" "public" {
+resource "aws_route_table_association" "private" {
   count          = 2
-  subnet_id      = aws_subnet.public[count.index].id
-  route_table_id = aws_route_table.public.id
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private.id
+}
+
+# ====================================
+# VPC Gateway Endpoints (FREE!)
+# MSK internally uses DynamoDB and S3
+# Without these, brokers can't function properly
+# ====================================
+
+# DynamoDB VPC Endpoint (FREE - Gateway type)
+# MSK uses DynamoDB internally for cluster metadata and state management
+resource "aws_vpc_endpoint" "dynamodb" {
+  vpc_id            = aws_vpc.msk_vpc.id
+  service_name      = "com.amazonaws.${var.aws_region}.dynamodb"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = {
+    Name        = "${var.cluster_name}-dynamodb-endpoint"
+    Environment = "dev"
+    Cost        = "FREE"
+  }
+}
+
+# S3 VPC Endpoint (FREE - Gateway type)
+# MSK uses S3 internally for storing logs and cluster data
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.msk_vpc.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private.id]
+
+  tags = {
+    Name        = "${var.cluster_name}-s3-endpoint"
+    Environment = "dev"
+    Cost        = "FREE"
+  }
 }
 
 # ====================================
@@ -186,7 +219,7 @@ resource "aws_msk_cluster" "main" {
 
   broker_node_group_info {
     instance_type  = "kafka.t3.small" # Cost optimized for DEV
-    client_subnets = aws_subnet.public[*].id
+    client_subnets = aws_subnet.private[*].id # Must use PRIVATE subnets for public access
     security_groups = [aws_security_group.msk.id]
 
     storage_info {

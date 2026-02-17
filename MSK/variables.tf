@@ -6,6 +6,18 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "access_key" {
+  description = "AWS access key"
+  type        = string
+  default     = "AKIA3MLDCXV6ALFIDMUG"
+}
+
+variable "secret_key" {
+  description = "AWS secret key"
+  type        = string
+  default     = "YYOpX3yn7cOFVQ8o6AYCFVMtDc8rrmxANQxMOMh0"
+}
+
 variable "cluster_name" {
   description = "Name of the MSK cluster"
   type        = string

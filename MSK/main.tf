@@ -44,7 +44,7 @@ resource "aws_internet_gateway" "msk_igw" {
   }
 }
 
-# Public Subnets (same as your manual setup)
+# Public Subnets 
 
 
 resource "aws_subnet" "public" {
@@ -92,7 +92,6 @@ resource "aws_vpc_endpoint" "dynamodb" {
   tags = {
     Name        = "${var.cluster_name}-dynamodb-endpoint"
     Environment = "dev"
-    Cost        = "FREE"
   }
 }
 
@@ -105,7 +104,6 @@ resource "aws_vpc_endpoint" "s3" {
   tags = {
     Name        = "${var.cluster_name}-s3-endpoint"
     Environment = "dev"
-    Cost        = "FREE"
   }
 }
 
@@ -172,23 +170,6 @@ resource "aws_cloudwatch_log_group" "msk" {
     Name        = "${var.cluster_name}-logs"
     Environment = "dev"
   }
-}
-
-
-# MSK Configuration
-
-resource "aws_msk_configuration" "main" {
-  name           = "${var.cluster_name}-config"
-  kafka_versions = [var.kafka_version]
-
-  server_properties = <<PROPERTIES
-auto.create.topics.enable=true
-delete.topic.enable=true
-log.retention.hours=24
-default.replication.factor=2
-min.insync.replicas=1
-num.partitions=3
-PROPERTIES
 }
 
 # MSK Cluster

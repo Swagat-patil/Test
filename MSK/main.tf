@@ -1,7 +1,3 @@
-# main.tf - DEV MSK Cluster with IAM Auth
-# Uses public subnets (same as manual setup)
-# Public access enabled after cluster creation via aws_msk_cluster update
-
 terraform {
   required_providers {
     aws = {
@@ -23,9 +19,7 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-# ====================================
 # VPC
-# ====================================
 
 resource "aws_vpc" "msk_vpc" {
   cidr_block           = var.vpc_cidr
@@ -39,9 +33,7 @@ resource "aws_vpc" "msk_vpc" {
   }
 }
 
-# ====================================
 # Internet Gateway
-# ====================================
 
 resource "aws_internet_gateway" "msk_igw" {
   vpc_id = aws_vpc.msk_vpc.id
@@ -52,9 +44,8 @@ resource "aws_internet_gateway" "msk_igw" {
   }
 }
 
-# ====================================
 # Public Subnets (same as your manual setup)
-# ====================================
+
 
 resource "aws_subnet" "public" {
   count                   = 2
@@ -90,9 +81,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# ====================================
-# VPC Gateway Endpoints (FREE!)
-# ====================================
+# VPC Gateway Endpoints 
 
 resource "aws_vpc_endpoint" "dynamodb" {
   vpc_id            = aws_vpc.msk_vpc.id
@@ -120,9 +109,7 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-# ====================================
 # Security Group
-# ====================================
 
 resource "aws_security_group" "msk" {
   name        = "${var.cluster_name}-msk-sg"
@@ -158,9 +145,7 @@ resource "aws_security_group" "msk" {
   }
 }
 
-# ====================================
 # KMS Key
-# ====================================
 
 resource "aws_kms_key" "msk" {
   description             = "KMS key for MSK cluster encryption"
@@ -177,9 +162,7 @@ resource "aws_kms_alias" "msk" {
   target_key_id = aws_kms_key.msk.key_id
 }
 
-# ====================================
 # CloudWatch Log Group
-# ====================================
 
 resource "aws_cloudwatch_log_group" "msk" {
   name              = "/aws/msk/${var.cluster_name}"
@@ -191,9 +174,8 @@ resource "aws_cloudwatch_log_group" "msk" {
   }
 }
 
-# ====================================
+
 # MSK Configuration
-# ====================================
 
 resource "aws_msk_configuration" "main" {
   name           = "${var.cluster_name}-config"
@@ -209,12 +191,9 @@ num.partitions=3
 PROPERTIES
 }
 
-# ====================================
 # MSK Cluster
 # Step 1: Create WITHOUT public access first
 # Step 2: Enable public access after creation
-# This is how AWS Console does it internally!
-# ====================================
 
 resource "aws_msk_cluster" "main" {
   cluster_name           = var.cluster_name
@@ -275,37 +254,8 @@ resource "aws_msk_cluster" "main" {
   }
 }
 
-# ====================================
-# Enable Public Access AFTER cluster creation
-# This uses AWS CLI via local-exec provisioner
-# Same as clicking "Edit" -> "Enable public access" in console
-# ====================================
-
-resource "null_resource" "enable_public_access" {
-  depends_on = [aws_msk_cluster.main]
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Waiting for MSK cluster to be ACTIVE..."
-      aws kafka wait cluster-active --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region}
-
-      echo "Enabling public access..."
-      aws kafka update-connectivity \
-        --cluster-arn ${aws_msk_cluster.main.arn} \
-        --region ${var.aws_region} \
-        --connectivity-info '{"PublicAccess":{"Type":"SERVICE_PROVIDED_EIPS"}}' \
-        --current-version $(aws kafka describe-cluster --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region} --query 'ClusterInfo.CurrentVersion' --output text)
-
-      echo "Waiting for update to complete..."
-      aws kafka wait cluster-active --cluster-arn ${aws_msk_cluster.main.arn} --region ${var.aws_region}
-      echo "Public access enabled successfully!"
-    EOT
-  }
-}
-
-# ====================================
 # IAM User
-# ====================================
+
 
 resource "aws_iam_user" "debezium" {
   name = "${var.cluster_name}-debezium-user"
@@ -321,9 +271,9 @@ resource "aws_iam_access_key" "debezium" {
   user = aws_iam_user.debezium.name
 }
 
-# ====================================
+
 # IAM Role
-# ====================================
+
 
 resource "aws_iam_role" "msk_access" {
   name        = "${var.cluster_name}-msk-access-role"
@@ -416,9 +366,8 @@ resource "aws_iam_user_policy" "assume_role" {
   })
 }
 
-# ====================================
 # Secrets Manager
-# ====================================
+
 
 resource "aws_secretsmanager_secret" "debezium_creds" {
   name        = "${var.cluster_name}-debezium-credentials"

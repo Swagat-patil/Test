@@ -7,8 +7,8 @@
 
 # ── AWS Provider ─────────────────────────────────────────────────────────────
 aws_region = "us-east-1"
-access_key = "YOUR_AWS_ACCESS_KEY_HERE"       # Replace with your key
-secret_key = "YOUR_AWS_SECRET_KEY_HERE"       # Replace with your secret
+access_key = "AKIA3MLDCXV6ALFIDMUG"       # Replace with your key
+secret_key = "YYOpX3yn7cOFVQ8o6AYCFVMtDc8rrmxANQxMOMh0"       # Replace with your secret
 
 # ── Naming ────────────────────────────────────────────────────────────────────
 # cluster_name → used for MSK, VPC, subnets, security groups, secrets
@@ -26,7 +26,7 @@ allowed_cidr_blocks = ["203.0.113.45/32"]
 
 # ── MSK ───────────────────────────────────────────────────────────────────────
 kafka_version      = "3.6.0"
-broker_volume_size = 10   # GB per broker (10 is fine for dev)
+broker_volume_size = 5   # GB per broker (10 is fine for dev)
 
 # Kafka topic names Debezium publishes to
 # Format: <debezium_server_name>.<oracle_schema>.<oracle_table>
